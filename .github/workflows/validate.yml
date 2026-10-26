@@ -15,8 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Inspect hassfest category schema
+        continue-on-error: true
         run: >-
-          docker run --rm --entrypoint python3 ghcr.io/home-assistant/hassfest
+          docker run --rm --workdir /usr/src/homeassistant --entrypoint python3 ghcr.io/home-assistant/hassfest
           -c "import inspect; import script.hassfest.manifest as m; s=inspect.getsource(m); print(s[max(0,s.find(\"categories\")-600):s.find(\"categories\")+1400])"
       - uses: home-assistant/actions/hassfest@master
   hacs:
