@@ -1,9 +1,6 @@
 {
   "domain": "xiaomi_ir",
   "name": "Xiaomi IR Local",
-  "categories": [
-    "buttons_remotes"
-  ],
   "codeowners": [
     "@ipmerlin"
   ],
