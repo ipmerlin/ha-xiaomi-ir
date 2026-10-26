@@ -54,7 +54,8 @@ class HomeAssistantContractTests(unittest.IsolatedAsyncioTestCase):
         self.emitter.async_write_ha_state = Mock()
 
     async def test_actual_miio_learning_accepts_zero_and_persists(self):
-        entity = XiaomiIRRemote(self.entry)
+        with patch("custom_components.xiaomi_ir.remote.Store"):
+            entity = XiaomiIRRemote(self.entry)
         entity.hass = Mock()
         entity.library = {}
         for acknowledgement in (0, [0], {"result": 0}, ["ok"]):
