@@ -31,5 +31,12 @@
       "unique_id_mismatch": "Это другое физическое устройство.",
       "reconfigure_successful": "Настройки устройства обновлены."
     }
+  },
+  "entity": {
+    "infrared": {
+      "infrared_emitter": {
+        "name": "ИК-передатчик"
+      }
+    }
   }
 }

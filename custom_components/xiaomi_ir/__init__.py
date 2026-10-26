@@ -7,7 +7,7 @@ from .const import DOMAIN
 from .coordinator import XiaomiIRCoordinator
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
-PLATFORMS = [Platform.REMOTE]
+PLATFORMS = [Platform.REMOTE, Platform.INFRARED]
 
 
 async def async_setup_entry(hass, entry):

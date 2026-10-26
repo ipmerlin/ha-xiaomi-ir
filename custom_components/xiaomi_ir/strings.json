@@ -31,5 +31,12 @@
       "unique_id_mismatch": "This is a different physical device.",
       "reconfigure_successful": "Device reconfigured."
     }
+  },
+  "entity": {
+    "infrared": {
+      "infrared_emitter": {
+        "name": "Infrared emitter"
+      }
+    }
   }
 }

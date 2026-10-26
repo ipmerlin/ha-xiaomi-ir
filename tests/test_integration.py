@@ -109,7 +109,7 @@ module("homeassistant")
 module("homeassistant.config_entries", ConfigFlow=Flow)
 module(
     "homeassistant.const",
-    Platform=types.SimpleNamespace(REMOTE="remote"),
+    Platform=types.SimpleNamespace(REMOTE="remote", INFRARED="infrared"),
     CONF_HOST="host",
     CONF_TOKEN="token",
     CONF_NAME="name",
@@ -138,6 +138,10 @@ module(
     RemoteEntityFeature=types.SimpleNamespace(LEARN_COMMAND=1, DELETE_COMMAND=2),
 )
 module(
+    "homeassistant.components.infrared",
+    InfraredEmitterEntity=type("InfraredEmitterEntity", (), {}),
+)
+module(
     "homeassistant.exceptions",
     HomeAssistantError=HAError,
     ServiceValidationError=HAError,
@@ -158,6 +162,7 @@ from custom_components.xiaomi_ir import (  # noqa: E402
     commands,
     config_flow,
     coordinator,
+    infrared,
     protocol,
     remote,
 )
@@ -241,6 +246,112 @@ class ProtocolTests(unittest.TestCase):
         for response in [None, [], {}, False, {"error": "failure"}]:
             with self.assertRaises(ValueError):
                 protocol.check_ack(response)
+
+
+class InfraredEncodingTests(unittest.TestCase):
+    def test_carrier_and_waveform_preserved_within_one_carrier_cycle(self):
+        source = [9000, -4500, 560, -1690, 560, -560]
+        words = [
+            int(word, 16) for word in infrared.timings_to_pronto(source, 38000).split()
+        ]
+        self.assertEqual(words[:4], [0, 109, 3, 0])
+        period = words[1] * infrared.PRONTO_TICK_US
+        for expected, cycles in zip(source, words[4:], strict=True):
+            self.assertLess(abs(abs(expected) - cycles * period), period)
+
+    def test_final_pulse_supported(self):
+        words = infrared.timings_to_pronto([560, -560, 560], 38000).split()
+        self.assertEqual(int(words[2], 16), 2)
+        self.assertEqual(len(words), 8)
+
+    def test_bad_signs_or_empty_signal_rejected(self):
+        for timings in [[], [-560, 560], [560, 560], [560, 0], [True, -560]]:
+            with self.assertRaises(ValueError):
+                infrared.timings_to_pronto(timings, 38000)
+
+    def test_invalid_carrier_rejected(self):
+        for frequency in [None, 0, -38000, True, 38000.0, 1]:
+            with self.assertRaises(ValueError):
+                infrared.timings_to_pronto([560, -560], frequency)
+
+    def test_duration_table_overflow_rejected(self):
+        timings = [value * 1000 * (1 if value % 2 else -1) for value in range(1, 19)]
+        with self.assertRaisesRegex(ValueError, "sixteen"):
+            infrared.timings_to_pronto(timings, 38000)
+
+    def test_long_duration_rejected(self):
+        with self.assertRaises(ValueError):
+            infrared.timings_to_pronto([560, -10_000_000], 38000)
+
+
+class InfraredEntityTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.entry = entry()
+        self.emitter = infrared.XiaomiInfraredEmitter(self.entry)
+        self.command = types.SimpleNamespace(
+            modulation=38000, get_raw_timings=lambda: [560, -560]
+        )
+        self.io = self.entry.runtime_data.async_io
+        self.io.return_value = ["ok"]
+
+    async def test_same_device_and_separate_entity(self):
+        self.assertEqual(
+            self.emitter._attr_device_info["identifiers"],
+            {("xiaomi_ir", self.entry.unique_id)},
+        )
+        self.assertEqual(self.emitter.unique_id, self.entry.unique_id + "_emitter")
+        added = MagicMock()
+        await infrared.async_setup_entry(
+            self.entry.runtime_data.hass, self.entry, added
+        )
+        self.assertIsInstance(
+            added.call_args.args[0][0], infrared.XiaomiInfraredEmitter
+        )
+
+    async def test_standard_command_sent_once_without_extra_repeats(self):
+        with patch.object(
+            infrared.ChuangmiIr, "pronto_to_raw", return_value=("YQ==", 38028)
+        ) as encode:
+            await self.emitter.async_send_command(self.command)
+        self.assertEqual(encode.call_args.kwargs, {"repeats": 0})
+        self.io.assert_awaited_once_with(
+            self.entry.runtime_data.device.play_raw, "YQ==", 38028
+        )
+
+    async def test_invalid_command_never_reaches_hardware(self):
+        self.command.modulation = 0
+        with self.assertRaises(HAError):
+            await self.emitter.async_send_command(self.command)
+        self.io.assert_not_awaited()
+
+    async def test_failed_send_not_retried(self):
+        self.io.side_effect = DeviceException()
+        with patch.object(
+            infrared.ChuangmiIr, "pronto_to_raw", return_value=("YQ==", 38000)
+        ):
+            with self.assertRaisesRegex(HAError, "not retried"):
+                await self.emitter.async_send_command(self.command)
+        self.assertEqual(self.io.await_count, 1)
+
+    async def test_bad_ack_is_failure(self):
+        self.io.return_value = None
+        with patch.object(
+            infrared.ChuangmiIr, "pronto_to_raw", return_value=("YQ==", 38000)
+        ):
+            with self.assertRaises(HAError):
+                await self.emitter.async_send_command(self.command)
+
+    async def test_emitter_waits_for_existing_remote_operation(self):
+        await self.entry.runtime_data.lock.acquire()
+        with patch.object(
+            infrared.ChuangmiIr, "pronto_to_raw", return_value=("YQ==", 38000)
+        ):
+            task = asyncio.create_task(self.emitter.async_send_command(self.command))
+            await asyncio.sleep(0)
+            self.io.assert_not_awaited()
+            self.entry.runtime_data.lock.release()
+            await task
+        self.assertEqual(self.io.await_count, 1)
 
 
 class LibraryTests(unittest.TestCase):
@@ -500,11 +611,11 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(await lifecycle.async_setup_entry(fake_hass, item))
         self.assertIs(item.runtime_data, instance)
         fake_hass.config_entries.async_forward_entry_setups.assert_awaited_once_with(
-            item, ["remote"]
+            item, ["remote", "infrared"]
         )
         self.assertTrue(await lifecycle.async_unload_entry(fake_hass, item))
         fake_hass.config_entries.async_unload_platforms.assert_awaited_once_with(
-            item, ["remote"]
+            item, ["remote", "infrared"]
         )
 
 
