@@ -25,8 +25,9 @@ class DeviceException(Exception):
 
 
 class DeviceError(DeviceException):
-    def __init__(self, code):
+    def __init__(self, code, message=None):
         self.code = code
+        self.message = message
 
 
 class HAError(Exception):
@@ -240,6 +241,28 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaises(DeviceError):
             protocol.read_code(device, 7)
 
+    def test_legacy_empty_read_requires_known_message(self):
+        device = MagicMock()
+        for message in ("no code for this key", "learn timeout"):
+            device.read.side_effect = DeviceError(0, message)
+            self.assertIsNone(protocol.read_code(device, 7))
+            device.read.side_effect = None
+            device.read.return_value = {"error": {"code": 0, "message": message}}
+            self.assertIsNone(protocol.read_code(device, 7))
+        for code, message in [
+            (0, "unknown failure"),
+            (0, None),
+            (False, "no code for this key"),
+            (0.0, "no code for this key"),
+        ]:
+            device.read.side_effect = DeviceError(code, message)
+            with self.assertRaises(DeviceError):
+                protocol.read_code(device, 7)
+            device.read.side_effect = None
+            device.read.return_value = {"error": {"code": code, "message": message}}
+            with self.assertRaises(ValueError):
+                protocol.read_code(device, 7)
+
     def test_ack(self):
         for response in ["ok", ["ok"], {"result": ["ok"]}]:
             protocol.check_ack(response)
@@ -247,7 +270,7 @@ class ProtocolTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 protocol.check_ack(response)
 
-    def test_zero_status_is_transmission_only_and_type_strict(self):
+    def test_zero_status_is_explicit_and_type_strict(self):
         for response in [0, [0], {"result": 0}, {"result": [0], "id": 3}]:
             protocol.check_ack(response, allow_zero=True)
             with self.assertRaises(ValueError):
@@ -534,6 +557,48 @@ class RemoteTests(unittest.IsolatedAsyncioTestCase):
             )
         notifications.async_create.assert_called()
         notifications.async_dismiss.assert_called()
+
+    async def test_learning_zero_ack_and_legacy_empty_slot_persist_code(self):
+        device = self.entry.runtime_data.device
+        for ack in (0, [0], {"result": 0}, ["ok"]):
+            with self.subTest(ack=ack):
+                device.read.side_effect = [
+                    {"error": {"code": 0, "message": "no code for this key"}},
+                    {"error": {"code": -5002}},
+                    {"key": "7", "code": "Yw=="},
+                ]
+                device.learn.return_value = ack
+
+                async def real_io(function, *args):
+                    return function(*args)
+
+                self.io.side_effect = real_io
+                with (
+                    patch.object(remote.secrets, "randbelow", return_value=6),
+                    patch.object(remote.asyncio, "sleep", AsyncMock()),
+                ):
+                    await self.remote.async_learn_command(
+                        device="tv", command=["power"]
+                    )
+                self.assertEqual(self.remote.library["tv"]["power"], "raw:Yw==")
+                self.assertEqual(
+                    (await self.remote.store.async_load())["tv"]["power"], "raw:Yw=="
+                )
+                device.learn.assert_called_once_with(7)
+                device.play.assert_not_called()
+                device.reset_mock()
+
+    async def test_learning_rejects_unknown_ack_without_overwriting(self):
+        for ack in (False, 0.0, None, [], -1):
+            with self.subTest(ack=ack):
+                self.io.reset_mock()
+                self.io.side_effect = [None, ack]
+                with self.assertRaises(HAError):
+                    await self.remote.async_learn_command(
+                        device="tv", command=["power"]
+                    )
+                self.assertEqual(self.io.await_count, 2)
+                self.assertEqual(self.remote.library["tv"]["power"], "raw:YQ==")
 
     async def test_occupied_slots_not_reused(self):
         self.io.side_effect = ["raw:old"] * 5

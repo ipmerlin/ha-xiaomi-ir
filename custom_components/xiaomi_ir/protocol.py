@@ -40,10 +40,10 @@ def mac_id(mac: str) -> str:
 
 
 def check_ack(response, *, allow_zero: bool = False) -> None:
-    """Accept known acknowledgements, including legacy ir_play status zero.
+    """Accept known acknowledgements, including legacy ir_play/ir_learn zero.
 
-    Zero is valid for transmission, not a blanket success for every miIO
-    method. Do not equate False or 0.0 with the integer protocol status 0.
+    Zero is enabled only at the corresponding command call sites, not for
+    arbitrary miIO methods. Do not equate False or 0.0 with the integer protocol status 0.
     """
     if isinstance(response, dict):
         if not set(response) <= {"result", "id"} or "result" not in response:
@@ -70,16 +70,25 @@ def transmission_error_message(error: Exception) -> str:
     )
 
 
+def _read_pending(code, message=None) -> bool:
+    """Legacy firmware reports a known empty-slot condition with code zero."""
+    if type(code) is not int:
+        return False
+    if code in (-5002, -5003):
+        return True
+    return code == 0 and message in ("no code for this key", "learn timeout")
+
+
 def read_code(device: ChuangmiIr, slot: int) -> str | None:
     """Return a learned code; only documented pending responses are ignored."""
     try:
         result = device.read(slot)
     except DeviceError as err:
-        if err.code in (-5002, -5003):
+        if _read_pending(err.code, getattr(err, "message", None)):
             return None
         raise
     if isinstance(result, dict) and isinstance(result.get("error"), dict):
-        if result["error"].get("code") in (-5002, -5003):
+        if _read_pending(result["error"].get("code"), result["error"].get("message")):
             return None
         raise InvalidResponse("IR read failed")
     if not isinstance(result, dict) or str(result.get("key")) != str(slot):

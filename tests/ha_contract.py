@@ -9,7 +9,7 @@ import sys
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -18,10 +18,12 @@ from homeassistant.const import Platform  # noqa: E402
 from homeassistant.exceptions import HomeAssistantError  # noqa: E402
 from infrared_protocols.commands.nec import NECCommand  # noqa: E402
 from miio.chuangmi_ir import ChuangmiIrSignal  # noqa: E402
+from miio.exceptions import DeviceError  # noqa: E402
 
 from custom_components.xiaomi_ir import PLATFORMS  # noqa: E402
 from custom_components.xiaomi_ir.infrared import XiaomiInfraredEmitter  # noqa: E402
-from custom_components.xiaomi_ir.protocol import create_device  # noqa: E402
+from custom_components.xiaomi_ir.protocol import create_device, read_code  # noqa: E402
+from custom_components.xiaomi_ir.remote import XiaomiIRRemote  # noqa: E402
 
 
 class HomeAssistantContractTests(unittest.IsolatedAsyncioTestCase):
@@ -50,6 +52,62 @@ class HomeAssistantContractTests(unittest.IsolatedAsyncioTestCase):
         )
         self.emitter = XiaomiInfraredEmitter(self.entry)
         self.emitter.async_write_ha_state = Mock()
+
+    async def test_actual_miio_learning_accepts_zero_and_persists(self):
+        entity = XiaomiIRRemote(self.entry)
+        entity.hass = Mock()
+        entity.library = {}
+        for acknowledgement in (0, [0], {"result": 0}, ["ok"]):
+            with self.subTest(acknowledgement=acknowledgement):
+                self.client.send.reset_mock()
+                self.client.send.side_effect = [
+                    {"error": {"code": 0, "message": "no code for this key"}},
+                    acknowledgement,
+                    {"key": "7", "code": "Yw=="},
+                ]
+                with (
+                    patch(
+                        "custom_components.xiaomi_ir.remote.secrets.randbelow",
+                        return_value=6,
+                    ),
+                    patch(
+                        "custom_components.xiaomi_ir.remote.asyncio.sleep",
+                        new_callable=AsyncMock,
+                    ),
+                    patch(
+                        "custom_components.xiaomi_ir.remote.persistent_notification.async_create"
+                    ),
+                    patch(
+                        "custom_components.xiaomi_ir.remote.persistent_notification.async_dismiss"
+                    ),
+                    patch.object(
+                        entity.store, "async_save", new_callable=AsyncMock
+                    ) as save,
+                ):
+                    await entity.async_learn_command(
+                        device="harman_kardon", command=["power_on"]
+                    )
+                save.assert_awaited_once_with(
+                    {"harman_kardon": {"power_on": "raw:Yw=="}}
+                )
+                self.assertEqual(
+                    entity.library["harman_kardon"]["power_on"], "raw:Yw=="
+                )
+                methods = [call.args[0] for call in self.client.send.call_args_list]
+                self.assertEqual(
+                    methods, ["miIO.ir_read", "miIO.ir_learn", "miIO.ir_read"]
+                )
+
+    async def test_real_device_error_legacy_empty_slot(self):
+        self.client.send.side_effect = DeviceError(
+            {"code": 0, "message": "no code for this key"}
+        )
+        self.assertIsNone(read_code(self.client, 7))
+        self.client.send.side_effect = DeviceError(
+            {"code": 0, "message": "unknown failure"}
+        )
+        with self.assertRaises(DeviceError):
+            read_code(self.client, 7)
 
     async def test_platform_and_actual_base_class(self):
         self.assertIn(Platform.INFRARED, PLATFORMS)

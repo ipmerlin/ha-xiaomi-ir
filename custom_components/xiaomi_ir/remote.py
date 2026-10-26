@@ -173,7 +173,9 @@ class XiaomiIRRemote(CoordinatorEntity, RemoteEntity, RestoreEntity):
                     break
             else:
                 raise ValueError("Cannot find an empty learning slot")
-            check_ack(await self.coordinator.async_io(device.learn, slot))
+            check_ack(
+                await self.coordinator.async_io(device.learn, slot), allow_zero=True
+            )
             persistent_notification.async_create(
                 self.hass,
                 f"Нажмите кнопку «{name}» на пульте «{subdevice}», направив его на Xiaomi IR.",
