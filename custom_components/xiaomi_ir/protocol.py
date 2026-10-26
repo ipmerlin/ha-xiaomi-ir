@@ -10,8 +10,39 @@ from miio.exceptions import DeviceError
 from .const import MODEL
 
 
+def response_shape(value, depth=0):
+    """Describe structure only; never include strings, IR codes or arbitrary keys."""
+    if value is None:
+        return "null"
+    if type(value) in (bool, int, float):
+        return type(value).__name__
+    if isinstance(value, str):
+        return f"str(length={len(value)})"
+    if depth >= 2:
+        return type(value).__name__
+    if isinstance(value, list):
+        items = ",".join(response_shape(item, depth + 1) for item in value[:2])
+        return f"list(length={len(value)},items=[{items}])"
+    if isinstance(value, dict):
+        fields = ("result", "error", "key", "code", "message", "id")
+        parts = [
+            f"{key}={response_shape(value[key], depth + 1)}"
+            for key in fields
+            if key in value
+        ]
+        other = len(value) - sum(key in value for key in fields)
+        if other:
+            parts.append(f"other_fields={other}")
+        return "dict(" + ",".join(parts) + ")"
+    return "unsupported_type"
+
+
 class InvalidResponse(ValueError):
-    """The device returned an unexpected response."""
+    """The device returned an unexpected response, with payload-free details."""
+
+    def __init__(self, message, response=None):
+        super().__init__(message)
+        self.response_shape = response_shape(response)
 
 
 def create_device(host: str, token: str) -> ChuangmiIr:
@@ -45,9 +76,12 @@ def check_ack(response, *, allow_zero: bool = False) -> None:
     Zero is enabled only at the corresponding command call sites, not for
     arbitrary miIO methods. Do not equate False or 0.0 with the integer protocol status 0.
     """
+    original_response = response
     if isinstance(response, dict):
         if not set(response) <= {"result", "id"} or "result" not in response:
-            raise InvalidResponse("Device did not acknowledge the request")
+            raise InvalidResponse(
+                "Device did not acknowledge the request", original_response
+            )
         response = response["result"]
     if isinstance(response, list) and len(response) == 1:
         response = response[0]
@@ -55,7 +89,7 @@ def check_ack(response, *, allow_zero: bool = False) -> None:
         return
     if allow_zero and type(response) is int and response == 0:
         return
-    raise InvalidResponse("Device did not acknowledge the request")
+    raise InvalidResponse("Device did not acknowledge the request", original_response)
 
 
 def transmission_error_message(error: Exception) -> str:
@@ -90,15 +124,15 @@ def read_code(device: ChuangmiIr, slot: int) -> str | None:
     if isinstance(result, dict) and isinstance(result.get("error"), dict):
         if _read_pending(result["error"].get("code"), result["error"].get("message")):
             return None
-        raise InvalidResponse("IR read failed")
+        raise InvalidResponse("IR read failed", result)
     if not isinstance(result, dict) or str(result.get("key")) != str(slot):
-        raise InvalidResponse("Unexpected IR slot response")
+        raise InvalidResponse("Unexpected IR slot response", result)
     code = result.get("code")
     if not isinstance(code, str) or not code:
-        raise InvalidResponse("Missing learned IR code")
+        raise InvalidResponse("Missing learned IR code", result)
     try:
         if not base64.b64decode(code, validate=True):
-            raise InvalidResponse("Empty learned IR code")
+            raise InvalidResponse("Empty learned IR code", result)
     except (binascii.Error, ValueError) as err:
-        raise InvalidResponse("Invalid learned IR code") from err
+        raise InvalidResponse("Invalid learned IR code", result) from err
     return f"raw:{code}"

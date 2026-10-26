@@ -263,6 +263,30 @@ class ProtocolTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 protocol.read_code(device, 7)
 
+    def test_response_shape_does_not_expose_payloads_or_unknown_keys(self):
+        secret = "sensitive-test-value"
+        response = {
+            "result": [{"code": secret}],
+            "key": secret,
+            "code": secret,
+            secret: secret,
+            "error": {"message": secret},
+        }
+        shape = protocol.response_shape(response)
+        self.assertNotIn(secret, shape)
+        self.assertIn("other_fields=1", shape)
+        self.assertIn("code=str(length=", shape)
+        self.assertIn("result=list", shape)
+
+    def test_invalid_read_retains_only_response_shape(self):
+        device = MagicMock()
+        device.read.return_value = [{"key": "7", "code": "sensitive-test-value"}]
+        with self.assertRaises(protocol.InvalidResponse) as raised:
+            protocol.read_code(device, 7)
+        self.assertIn("list(length=1", raised.exception.response_shape)
+        self.assertNotIn("sensitive-test-value", str(raised.exception))
+        self.assertNotIn("sensitive-test-value", raised.exception.response_shape)
+
     def test_ack(self):
         for response in ["ok", ["ok"], {"result": ["ok"]}]:
             protocol.check_ack(response)
@@ -599,6 +623,53 @@ class RemoteTests(unittest.IsolatedAsyncioTestCase):
                     )
                 self.assertEqual(self.io.await_count, 2)
                 self.assertEqual(self.remote.library["tv"]["power"], "raw:YQ==")
+
+    async def test_failures_log_the_exact_learning_stage_without_codes(self):
+        device = self.entry.runtime_data.device
+        secret = "sensitive-test-value"
+
+        async def real_io(function, *args):
+            return function(*args)
+
+        self.io.side_effect = real_io
+        scenarios = [
+            ("check_empty_slot", [{"code": secret}], 0, "Unexpected IR slot response"),
+            (
+                "start_learning",
+                [{"error": {"code": -5002}}],
+                {secret: secret},
+                "Device did not acknowledge the request",
+            ),
+            (
+                "read_learning",
+                [{"error": {"code": -5002}}, {"key": "7", "code": "!"}],
+                0,
+                "Invalid learned IR code",
+            ),
+        ]
+        for stage, reads, ack, reason in scenarios:
+            with self.subTest(stage=stage):
+                device.reset_mock()
+                device.read.side_effect = reads
+                device.learn.return_value = ack
+                with (
+                    patch.object(remote.secrets, "randbelow", return_value=6),
+                    patch.object(remote.asyncio, "sleep", AsyncMock()),
+                    self.assertLogs(remote._LOGGER, level="WARNING") as logs,
+                    self.assertRaises(HAError),
+                ):
+                    await self.remote.async_learn_command(
+                        device="tv", command=["power"]
+                    )
+                text = " ".join(logs.output)
+                self.assertIn(f"stage={stage}", text)
+                self.assertIn(reason, text)
+                self.assertNotIn(secret, text)
+                self.assertEqual(self.remote.library["tv"]["power"], "raw:YQ==")
+                device.play.assert_not_called()
+                self.assertEqual(
+                    device.learn.call_count, 0 if stage == "check_empty_slot" else 1
+                )
 
     async def test_occupied_slots_not_reused(self):
         self.io.side_effect = ["raw:old"] * 5

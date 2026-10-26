@@ -1,6 +1,7 @@
 """Standard remote actions backed by a local Xiaomi IR controller."""
 
 import asyncio
+import logging
 import secrets
 from copy import deepcopy
 
@@ -21,7 +22,9 @@ from .commands import (
     validate_library,
 )
 from .const import DOMAIN, MODEL, STORAGE_VERSION
-from .protocol import check_ack, read_code, transmission_error_message
+from .protocol import InvalidResponse, check_ack, read_code, transmission_error_message
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -164,6 +167,7 @@ class XiaomiIRRemote(CoordinatorEntity, RemoteEntity, RestoreEntity):
     async def _learn_one(self, subdevice, name, timeout):
         device = self.coordinator.device
         notification_id = f"{DOMAIN}_learn_{self.unique_id}"
+        stage = "check_empty_slot"
         try:
             # Verify an unused slot, so a previous capture can never be mistaken
             # for a newly pressed button after a restart or failed learning call.
@@ -173,6 +177,7 @@ class XiaomiIRRemote(CoordinatorEntity, RemoteEntity, RestoreEntity):
                     break
             else:
                 raise ValueError("Cannot find an empty learning slot")
+            stage = "start_learning"
             check_ack(
                 await self.coordinator.async_io(device.learn, slot), allow_zero=True
             )
@@ -182,6 +187,7 @@ class XiaomiIRRemote(CoordinatorEntity, RemoteEntity, RestoreEntity):
                 title="Обучение Xiaomi IR",
                 notification_id=notification_id,
             )
+            stage = "read_learning"
             deadline = asyncio.get_running_loop().time() + timeout
             while asyncio.get_running_loop().time() < deadline:
                 await asyncio.sleep(1)
@@ -190,8 +196,14 @@ class XiaomiIRRemote(CoordinatorEntity, RemoteEntity, RestoreEntity):
                     return code
             raise TimeoutError("No IR code received before the learning timeout")
         except (DeviceException, OSError, ValueError) as err:
+            if isinstance(err, InvalidResponse):
+                # InvalidResponse messages are fixed strings owned by protocol.py.
+                detail = f"{err}; response={err.response_shape}"
+            else:
+                detail = type(err).__name__
+            _LOGGER.warning("IR learning failed: stage=%s; %s", stage, detail)
             raise HomeAssistantError(
-                "Не удалось обучить команду: проверьте связь и повторите обучение."
+                f"Не удалось обучить команду (этап: {stage}). Проверьте журнал Xiaomi IR Local."
             ) from err
         finally:
             persistent_notification.async_dismiss(self.hass, notification_id)
