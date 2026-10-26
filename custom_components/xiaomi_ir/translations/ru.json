@@ -1,0 +1,35 @@
+{
+  "title": "Xiaomi IR Local",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Подключение Xiaomi IR",
+        "description": "Введите локальный IP-адрес и токен устройства chuangmi.ir.v2.",
+        "data": {
+          "name": "Имя",
+          "host": "IP-адрес",
+          "token": "Токен"
+        }
+      },
+      "reconfigure": {
+        "title": "Перенастройка Xiaomi IR",
+        "description": "Введите IP-адрес и токен того же физического устройства.",
+        "data": {
+          "name": "Имя",
+          "host": "IP-адрес",
+          "token": "Токен"
+        }
+      }
+    },
+    "error": {
+      "invalid_token": "Введите ровно 32 шестнадцатеричных символа.",
+      "cannot_connect": "Нет связи. Проверьте IP-адрес, токен и доступ по локальной сети.",
+      "unsupported_model": "Поддерживается только chuangmi.ir.v2."
+    },
+    "abort": {
+      "already_configured": "Это устройство уже настроено.",
+      "unique_id_mismatch": "Это другое физическое устройство.",
+      "reconfigure_successful": "Настройки устройства обновлены."
+    }
+  }
+}

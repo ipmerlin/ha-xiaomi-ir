@@ -1,0 +1,35 @@
+{
+  "title": "Xiaomi IR Local",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect Xiaomi IR",
+        "description": "Enter the local IP address and token for chuangmi.ir.v2.",
+        "data": {
+          "name": "Name",
+          "host": "IP address",
+          "token": "Token"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Xiaomi IR",
+        "description": "Enter the IP address and token for the same physical device.",
+        "data": {
+          "name": "Name",
+          "host": "IP address",
+          "token": "Token"
+        }
+      }
+    },
+    "error": {
+      "invalid_token": "Enter exactly 32 hexadecimal characters.",
+      "cannot_connect": "Cannot connect. Check IP address, token, and local network access.",
+      "unsupported_model": "Only chuangmi.ir.v2 is supported."
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
+      "unique_id_mismatch": "This is a different physical device.",
+      "reconfigure_successful": "Device reconfigured."
+    }
+  }
+}
