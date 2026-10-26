@@ -12,7 +12,7 @@ manifest = json.loads((COMPONENT / "manifest.json").read_text(encoding="utf-8"))
 assert manifest["domain"] == COMPONENT.name
 assert list(manifest) == ["domain", "name"] + sorted(set(manifest) - {"domain", "name"})
 assert manifest["config_flow"] is True
-assert manifest["requirements"] == ["python-miio==0.5.12"]
+assert manifest["requirements"] == ["python-miio>=0.5.12"]
 for path in COMPONENT.glob("*.py"):
     ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
