@@ -223,6 +223,17 @@ class ProtocolTests(unittest.TestCase):
         self.assertIsNone(protocol.read_code(device, 7))
         self.assertEqual(protocol.read_code(device, 7), "raw:YQ==")
 
+    def test_empty_code_for_matching_slot_is_pending(self):
+        device = MagicMock()
+        device.read.side_effect = [
+            {"key": "123456", "code": ""},
+            {"key": "123456", "code": ""},
+            {"key": "123456", "code": "Yw=="},
+        ]
+        self.assertIsNone(protocol.read_code(device, 123456))
+        self.assertIsNone(protocol.read_code(device, 123456))
+        self.assertEqual(protocol.read_code(device, 123456), "raw:Yw==")
+
     def test_bad_read_and_unrelated_errors(self):
         device = MagicMock()
         for response in [
@@ -231,7 +242,10 @@ class ProtocolTests(unittest.TestCase):
             {},
             {"key": "8", "code": "YQ=="},
             {"key": "7", "code": "!"},
-            {"key": "7", "code": ""},
+            {"key": "8", "code": ""},
+            {"key": "7"},
+            {"key": "7", "code": None},
+            {"key": "7", "code": " "},
             {"error": {"code": -1}},
         ]:
             device.read.return_value = response
@@ -670,6 +684,58 @@ class RemoteTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(
                     device.learn.call_count, 0 if stage == "check_empty_slot" else 1
                 )
+
+    async def test_empty_codes_are_polled_until_capture_before_saving(self):
+        device = self.entry.runtime_data.device
+        device.read.side_effect = [
+            {"key": "123456", "code": ""},
+            {"key": "123456", "code": ""},
+            {"key": "123456", "code": ""},
+            {"key": "123456", "code": "Yw=="},
+        ]
+        device.learn.return_value = 0
+
+        async def invoke(function, *args):
+            self.assertEqual(self.remote.library["tv"]["power"], "raw:YQ==")
+            return function(*args)
+
+        self.io.side_effect = invoke
+        with (
+            patch.object(remote.secrets, "randbelow", return_value=123455),
+            patch.object(remote.asyncio, "sleep", AsyncMock()) as sleep,
+        ):
+            await self.remote.async_learn_command(device="tv", command=["power"])
+        self.assertEqual(sleep.await_count, 3)
+        self.assertEqual(self.remote.library["tv"]["power"], "raw:Yw==")
+        self.assertEqual(
+            (await self.remote.store.async_load())["tv"]["power"], "raw:Yw=="
+        )
+        device.learn.assert_called_once_with(123456)
+        device.play.assert_not_called()
+
+    async def test_empty_codes_stop_at_deadline_without_overwriting(self):
+        device = self.entry.runtime_data.device
+        device.read.return_value = {"key": "123456", "code": ""}
+        device.learn.return_value = 0
+
+        async def invoke(function, *args):
+            return function(*args)
+
+        self.io.side_effect = invoke
+        clock = types.SimpleNamespace(time=MagicMock(side_effect=[0, 0, 31]))
+        with (
+            patch.object(remote.secrets, "randbelow", return_value=123455),
+            patch.object(remote.asyncio, "sleep", AsyncMock()),
+            patch.object(remote.asyncio, "get_running_loop", return_value=clock),
+            patch.object(self.remote.store, "async_save", AsyncMock()) as save,
+            self.assertRaises(HAError) as raised,
+        ):
+            await self.remote.async_learn_command(device="tv", command=["power"])
+        self.assertIsInstance(raised.exception.__cause__, TimeoutError)
+        self.assertEqual(self.remote.library["tv"]["power"], "raw:YQ==")
+        save.assert_not_awaited()
+        device.learn.assert_called_once_with(123456)
+        device.play.assert_not_called()
 
     async def test_occupied_slots_not_reused(self):
         self.io.side_effect = ["raw:old"] * 5

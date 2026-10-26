@@ -62,8 +62,10 @@ class HomeAssistantContractTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(acknowledgement=acknowledgement):
                 self.client.send.reset_mock()
                 self.client.send.side_effect = [
-                    {"error": {"code": 0, "message": "no code for this key"}},
+                    {"key": "7", "code": ""},
                     acknowledgement,
+                    {"key": "7", "code": ""},
+                    {"key": "7", "code": ""},
                     {"key": "7", "code": "Yw=="},
                 ]
                 with (
@@ -96,7 +98,14 @@ class HomeAssistantContractTests(unittest.IsolatedAsyncioTestCase):
                 )
                 methods = [call.args[0] for call in self.client.send.call_args_list]
                 self.assertEqual(
-                    methods, ["miIO.ir_read", "miIO.ir_learn", "miIO.ir_read"]
+                    methods,
+                    [
+                        "miIO.ir_read",
+                        "miIO.ir_learn",
+                        "miIO.ir_read",
+                        "miIO.ir_read",
+                        "miIO.ir_read",
+                    ],
                 )
 
     async def test_real_device_error_legacy_empty_slot(self):

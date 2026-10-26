@@ -128,7 +128,11 @@ def read_code(device: ChuangmiIr, slot: int) -> str | None:
     if not isinstance(result, dict) or str(result.get("key")) != str(slot):
         raise InvalidResponse("Unexpected IR slot response", result)
     code = result.get("code")
-    if not isinstance(code, str) or not code:
+    # Observed on the receiver while learning: a matching slot with an empty
+    # string means no signal has been captured yet, not a successfully learned code.
+    if code == "":
+        return None
+    if not isinstance(code, str):
         raise InvalidResponse("Missing learned IR code", result)
     try:
         if not base64.b64decode(code, validate=True):
