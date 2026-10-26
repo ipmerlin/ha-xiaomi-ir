@@ -91,6 +91,13 @@ class HomeAssistantContractTests(unittest.IsolatedAsyncioTestCase):
             await self.emitter.async_send_command_internal(command)
         self.assertEqual(self.emitter.state, timestamp)
 
+    async def test_legacy_zero_status_updates_timestamp_without_retransmission(self):
+        self.client.send.return_value = 0
+        command = NECCommand(address=0x04, command=0x08)
+        await self.emitter.async_send_command_internal(command)
+        self.client.send.assert_called_once()
+        self.assertIsNotNone(self.emitter.state)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

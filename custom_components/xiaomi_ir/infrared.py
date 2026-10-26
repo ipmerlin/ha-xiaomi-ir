@@ -9,7 +9,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from miio import ChuangmiIr, DeviceException
 
 from .const import DOMAIN, MODEL
-from .protocol import check_ack
+from .protocol import check_ack, transmission_error_message
 
 PARALLEL_UPDATES = 1
 PRONTO_TICK_US = 0.241246
@@ -94,9 +94,6 @@ class XiaomiInfraredEmitter(CoordinatorEntity, InfraredEmitterEntity):
                 response = await self.coordinator.async_io(
                     self.coordinator.device.play_raw, code, frequency
                 )
-                check_ack(response)
+                check_ack(response, allow_zero=True)
             except (DeviceException, OSError, ValueError) as err:
-                raise HomeAssistantError(
-                    "IR transmission failed or was not acknowledged. "
-                    "It may have been sent; it was not retried."
-                ) from err
+                raise HomeAssistantError(transmission_error_message(err)) from err

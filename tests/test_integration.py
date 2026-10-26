@@ -247,6 +247,27 @@ class ProtocolTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 protocol.check_ack(response)
 
+    def test_zero_status_is_transmission_only_and_type_strict(self):
+        for response in [0, [0], {"result": 0}, {"result": [0], "id": 3}]:
+            protocol.check_ack(response, allow_zero=True)
+            with self.assertRaises(ValueError):
+                protocol.check_ack(response)
+        for response in [
+            False,
+            True,
+            0.0,
+            [False],
+            [0.0],
+            [-1],
+            1,
+            None,
+            [],
+            {},
+            {"result": 0, "error": {"code": -1}},
+        ]:
+            with self.assertRaises(ValueError):
+                protocol.check_ack(response, allow_zero=True)
+
 
 class InfraredEncodingTests(unittest.TestCase):
     def test_carrier_and_waveform_preserved_within_one_carrier_cycle(self):
@@ -341,6 +362,14 @@ class InfraredEntityTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(HAError):
                 await self.emitter.async_send_command(self.command)
 
+    async def test_zero_ack_success(self):
+        self.io.return_value = 0
+        with patch.object(
+            infrared.ChuangmiIr, "pronto_to_raw", return_value=("YQ==", 38000)
+        ):
+            await self.emitter.async_send_command(self.command)
+        self.assertEqual(self.io.await_count, 1)
+
     async def test_emitter_waits_for_existing_remote_operation(self):
         await self.entry.runtime_data.lock.acquire()
         with patch.object(
@@ -393,6 +422,11 @@ class RemoteTests(unittest.IsolatedAsyncioTestCase):
             ["power", "up"], device="tv", num_repeats=2, delay_secs=0
         )
         self.assertEqual(self.io.await_count, 4)
+
+    async def test_zero_ack_success(self):
+        self.io.return_value = 0
+        await self.remote.async_send_command(["power"], device="tv")
+        self.assertEqual(self.io.await_count, 1)
 
     async def test_missing_sequence_never_partially_sends(self):
         with self.assertRaises(HAError):

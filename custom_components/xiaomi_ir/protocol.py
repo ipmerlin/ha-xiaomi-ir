@@ -39,10 +39,35 @@ def mac_id(mac: str) -> str:
     return value
 
 
-def check_ack(response) -> None:
-    """Reject errors or empty/unexpected acknowledgements."""
-    if response not in ("ok", ["ok"], {"result": "ok"}, {"result": ["ok"]}):
-        raise InvalidResponse("Device did not acknowledge the request")
+def check_ack(response, *, allow_zero: bool = False) -> None:
+    """Accept known acknowledgements, including legacy ir_play status zero.
+
+    Zero is valid for transmission, not a blanket success for every miIO
+    method. Do not equate False or 0.0 with the integer protocol status 0.
+    """
+    if isinstance(response, dict):
+        if not set(response) <= {"result", "id"} or "result" not in response:
+            raise InvalidResponse("Device did not acknowledge the request")
+        response = response["result"]
+    if isinstance(response, list) and len(response) == 1:
+        response = response[0]
+    if type(response) is str and response == "ok":
+        return
+    if allow_zero and type(response) is int and response == 0:
+        return
+    raise InvalidResponse("Device did not acknowledge the request")
+
+
+def transmission_error_message(error: Exception) -> str:
+    """Expose the failure category without response payloads or secrets."""
+    reason = (
+        "unexpected acknowledgement"
+        if isinstance(error, InvalidResponse)
+        else type(error).__name__
+    )
+    return (
+        f"IR transmission failed ({reason}). It may have been sent; it was not retried."
+    )
 
 
 def read_code(device: ChuangmiIr, slot: int) -> str | None:

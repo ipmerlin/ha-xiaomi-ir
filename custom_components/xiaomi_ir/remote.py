@@ -21,7 +21,7 @@ from .commands import (
     validate_library,
 )
 from .const import DOMAIN, MODEL, STORAGE_VERSION
-from .protocol import check_ack, read_code
+from .protocol import check_ack, read_code, transmission_error_message
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -109,11 +109,10 @@ class XiaomiIRRemote(CoordinatorEntity, RemoteEntity, RestoreEntity):
                         response = await self.coordinator.async_io(
                             self.coordinator.device.play, code
                         )
-                        check_ack(response)
+                        check_ack(response, allow_zero=True)
                     except (DeviceException, OSError, ValueError) as err:
                         raise HomeAssistantError(
-                            "IR transmission failed or was not acknowledged. "
-                            "It may have been sent; it was not retried."
+                            transmission_error_message(err)
                         ) from err
                     sent = True
 
